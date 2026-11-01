@@ -31,7 +31,8 @@ jobs:
   checkin:
     if: github.event_name == 'schedule' || inputs.dispatch_source == 'manual' || inputs.dispatch_source == 'external'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 略大于 Run Checkin 步骤的 25 分钟上限，为检出与依赖安装留出余量
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -51,7 +52,10 @@ jobs:
 
       - name: Run Checkin
         run: python checkin.py
-        timeout-minutes: 8
+        # 单次请求超时已放宽到 120 秒（见 checkin.py 的 REQUEST_TIMEOUT）。
+        # 最坏情况为 3 次重试 × 3 个域名 × 120 秒 + 2 次 60 秒间隔 ≈ 19 分钟，
+        # 因此步骤上限设为 25 分钟，避免网络缓慢时被提前掐断。
+        timeout-minutes: 25
         env:
           GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
           # Must match the browser that created the current gld:sess.
@@ -62,5 +66,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PUSH_LEVEL: ${{ vars.PUSH_LEVEL || 'fail_only' }}
           EXCHANGE_PLAN: ${{ vars.EXCHANGE_PLAN || 'plan500' }}
+          # 海外 runner 访问 glados 域名延迟较高，10 秒必然超时，这里放宽到 120 秒。
+          GLADOS_REQUEST_TIMEOUT: '120'
           CHECKIN_MAX_ATTEMPTS: '3'
           CHECKIN_RETRY_DELAY_SECONDS: '60'

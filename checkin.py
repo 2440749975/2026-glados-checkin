@@ -31,9 +31,26 @@ if sys.platform.startswith('win'):
 # 域名优先级：Cloud 第一
 DOMAINS = [
     "https://glados.cloud",
-    "https://glados.rocks", 
+    "https://glados.rocks",
     "https://glados.network",
 ]
+
+# 单次 HTTP 请求超时（秒）。
+# GitHub Actions 的 runner 位于海外，访问 glados 各域名的往返延迟远高于国
+# 内，官方设置的目标站点在高负载时单次响应可能需要数十秒甚至更久。上游默认
+# 的 10 秒会稳定触发 ReadTimeout，导致签到直接判负。此处放宽到 120 秒，并
+# 允许通过环境变量 GLADOS_REQUEST_TIMEOUT 覆盖，便于在不改代码的前提下调整。
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
+
+REQUEST_TIMEOUT = DEFAULT_REQUEST_TIMEOUT_SECONDS
+try:
+    _configured_timeout = float(os.environ.get('GLADOS_REQUEST_TIMEOUT', ''))
+    # 只接受正数；异常值回退到默认值，避免超时设为 0 或负数导致请求立即失败
+    if _configured_timeout > 0:
+        REQUEST_TIMEOUT = _configured_timeout
+except ValueError:
+    pass
+
 
 DEFAULT_USER_AGENT = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -306,11 +323,11 @@ class GLaDOS:
                     # 表单提交交给 requests 自动设置 Content-Type，
                     # 手动预设 JSON 头会被兑换接口拒绝。
                     h.pop('Content-Type', None)
-                    resp = requests.post(url, headers=h, data=data, timeout=10)
+                    resp = requests.post(url, headers=h, data=data, timeout=REQUEST_TIMEOUT)
                 elif method == 'GET':
-                    resp = requests.get(url, headers=h, timeout=10)
+                    resp = requests.get(url, headers=h, timeout=REQUEST_TIMEOUT)
                 else:
-                    resp = requests.post(url, headers=h, json=data, timeout=10)
+                    resp = requests.post(url, headers=h, json=data, timeout=REQUEST_TIMEOUT)
 
                 if resp.status_code == 200:
                     self.domain = d # Remember working domain
