@@ -64,6 +64,8 @@ jobs:
           PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # PushDeer 推送通道（当前使用这个）
+          PUSHDEER_SENDKEY: ${{ secrets.PUSHDEER_SENDKEY }}
           PUSH_LEVEL: ${{ vars.PUSH_LEVEL || 'fail_only' }}
           EXCHANGE_PLAN: ${{ vars.EXCHANGE_PLAN || 'plan500' }}
           # 海外 runner 访问 glados 域名延迟较高，10 秒必然超时，这里放宽到 120 秒。

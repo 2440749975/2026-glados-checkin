@@ -51,6 +51,10 @@ try:
 except ValueError:
     pass
 
+# 推送接口的超时（秒）。推送服务是独立第三方，不需要 glados 那么长的等待，
+# 避免推送卡住把整个 job 拖到超时。
+PUSH_REQUEST_TIMEOUT_SECONDS = 30
+
 
 DEFAULT_USER_AGENT = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -456,6 +460,71 @@ def pushplus(token, title, content):
         log(f"❌ PushPlus 推送失败: {e}")
         return False
 
+def html_to_plain_text(content):
+    """把推送用的 HTML 正文转换成纯文本。
+
+    PushDeer 等渠道不接受 HTML 标签，直接发原始 HTML 会把标签当正文显示。
+    这里做一次轻量转换：块级元素转成换行，其余标签剥离，并还原 HTML 实体。
+
+    参数:
+        content: 由 results 拼出的 HTML 片段（含 div/h3/p/br/span/small）
+    返回:
+        纯文本正文，行尾空白已清理，多余空行已压缩
+    """
+    text = re.sub(r'<br\s*/?>', '\n', content)
+    # 标题（h3）单独成行，去掉标签只保留文字
+    text = re.sub(r'<h3[^>]*>', '', text)
+    text = re.sub(r'</h3>', '\n', text)
+    # 块级元素结束后换行，保证各账号结果之间不会挤在同一行
+    text = re.sub(r'</(div|p)>', '\n', text)
+    # 剩余标签（span/small/b/strong 等）全部剥离，只保留其中的文字
+    text = re.sub(r'<[^>]+>', '', text)
+    # 还原被转义的字符，例如邮箱里的 &amp;
+    text = html.unescape(text)
+    # 模板缩进会带入大量空白，逐行清理后再压缩连续空行
+    text = '\n'.join(line.strip() for line in text.split('\n'))
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+def pushdeer_push(pushkey, title, content):
+    """通过 PushDeer 推送签到结果。
+
+    参数:
+        pushkey: PushDeer 推送密钥（对应环境变量 PUSHDEER_SENDKEY）
+        title:   推送标题，写入 PushDeer 的 text 字段
+        content: HTML 格式的正文，发送前会转换成纯文本
+    返回:
+        True 表示推送成功；未配置密钥或推送失败时返回 False
+    """
+    if not pushkey:
+        return False
+    try:
+        url = "https://api2.pushdeer.com/message/push"
+        response = requests.post(
+            url,
+            data={
+                'pushkey': pushkey,
+                'text': title,
+                'desp': html_to_plain_text(content),
+                'type': 'text',
+            },
+            timeout=PUSH_REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        # PushDeer 约定 code=0 为成功，其余均为失败
+        if payload.get('code') != 0:
+            raise RuntimeError(
+                payload.get('error') or f"PushDeer code={payload.get('code')}"
+            )
+        log("✅ PushDeer 推送成功")
+        return True
+    except (requests.RequestException, ValueError, RuntimeError) as e:
+        log(f"❌ PushDeer 推送失败: {e}")
+        return False
+
+
 def telegram_push(token, chat_id, title, content):
     if not token or not chat_id: return
     try:
@@ -614,16 +683,19 @@ def main():
     ptoken = os.environ.get("PUSHPLUS_TOKEN")
     tg_token = os.environ.get("TELEGRAM_BOT_TOKEN")
     tg_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    
-    if ptoken or (tg_token and tg_chat_id):
+    pd_key = os.environ.get("PUSHDEER_SENDKEY")
+
+    if ptoken or (tg_token and tg_chat_id) or pd_key:
         title = f"GLaDOS签到: 成功{success_cnt}/{len(cookies)}"
         content = "".join(results)
         content += f"<br><small>时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small>"
-        
+
         if ptoken:
             pushplus(ptoken, title, content)
         if tg_token and tg_chat_id:
             telegram_push(tg_token, tg_chat_id, title, content)
+        if pd_key:
+            pushdeer_push(pd_key, title, content)
 
     return 0 if success_cnt == len(cookies) else 1
 
